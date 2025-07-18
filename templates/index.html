@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>BGG-but Görüntü Arşivi ve Canlı Kamera</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 30px; }
+        h1 { color: #333; }
+        .archive-table { border-collapse: collapse; width: 100%; margin-top: 30px; }
+        .archive-table th, .archive-table td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        .archive-table th { background: #f5f5f5; }
+        .food-list { font-size: 0.95em; }
+        .food-list span { display: inline-block; margin: 2px 4px; padding: 2px 6px; border-radius: 4px; background: #eee; }
+        .img-thumb { max-width: 180px; max-height: 120px; border: 1px solid #aaa; }
+        .live-cam { margin-bottom: 20px; }
+        .live-cam img { max-width: 400px; max-height: 300px; border: 2px solid #444; }
+        .btn { padding: 8px 16px; margin: 0 4px; border: none; border-radius: 4px; background: #1976d2; color: #fff; cursor: pointer; font-size: 1em; }
+        .btn:disabled { background: #aaa; }
+        .detected-foods { margin: 10px 0 20px 0; }
+        .masa-select { font-size: 1em; padding: 4px 10px; margin-left: 10px; }
+        .login-box { margin-bottom: 20px; }
+        .login-box input, .login-box select { font-size: 1em; padding: 4px 10px; }
+        .user-info { margin-bottom: 10px; color: #1976d2; font-weight: bold; }
+        .order-box { margin: 15px 0; padding: 10px; border: 1px solid #bbb; border-radius: 6px; background: #f9f9f9; max-width: 420px; }
+        .order-box h3 { margin: 0 0 8px 0; font-size: 1.1em; }
+        .order-list span { margin-right: 8px; }
+        .order-total { font-weight: bold; color: #1976d2; }
+    </style>
+</head>
+<body>
+    <h1>BGG-but Canlı Kamera ve Görüntü Arşivi</h1>
+    <div class="login-box" id="loginBox">
+        <label for="waiterSelect"><b>Garson Girişi:</b></label>
+        <select id="waiterSelect"></select>
+        <button class="btn" onclick="login()">Giriş Yap</button>
+    </div>
+    <div class="user-info" id="userInfo" style="display:none;"></div>
+    <div class="live-cam">
+        <label for="masaSelect"><b>Masa Seç:</b></label>
+        <select id="masaSelect" class="masa-select"></select>
+        <button class="btn" onclick="startCamera()" id="btnStart">Kamerayı Başlat</button>
+        <button class="btn" onclick="stopCamera()" id="btnStop">Kamerayı Durdur</button>
+        <button class="btn" onclick="detectFood()" id="btnDetect">Yemekleri Tespit Et</button>
+        <button class="btn" onclick="clearOrder()" id="btnClear">Siparişi Temizle/Öde</button>
+        <br><br>
+        <img id="liveFrame" src="" alt="Canlı Kamera" />
+        <div class="order-box" id="orderBox" style="display:none;"></div>
+        <div class="detected-foods" id="detectedFoods"></div>
+    </div>
+    <h2>Görüntü Arşivi</h2>
+    <table class="archive-table" id="archiveTable">
+        <thead>
+            <tr>
+                <th>Tarih/Saat</th>
+                <th>Masa</th>
+                <th>Görüntü</th>
+                <th>Tespit Edilen Yemekler</th>
+            </tr>
+        </thead>
+        <tbody id="archiveBody">
+            <tr><td colspan="4">Yükleniyor...</td></tr>
+        </tbody>
+    </table>
+    <script>
+        let selectedTable = '1';
+        let currentWaiter = null;
+        function fetchWaiters() {
+            fetch('/get_waiters')
+                .then(res => res.json())
+                .then(data => {
+                    const select = document.getElementById('waiterSelect');
+                    select.innerHTML = '';
+                    Object.keys(data).forEach(id => {
+                        const opt = document.createElement('option');
+                        opt.value = id;
+                        opt.text = data[id].name;
+                        select.appendChild(opt);
+                    });
+                });
+        }
+        function login() {
+            const select = document.getElementById('waiterSelect');
+            currentWaiter = select.value;
+            document.getElementById('loginBox').style.display = 'none';
+            document.getElementById('userInfo').style.display = 'block';
+            document.getElementById('userInfo').innerText = 'Giriş Yapan Garson: ' + select.options[select.selectedIndex].text;
+            setButtonsDisabled(false);
+            fetchOrder();
+        }
+        function setButtonsDisabled(disabled) {
+            document.getElementById('btnStart').disabled = disabled;
+            document.getElementById('btnStop').disabled = disabled;
+            document.getElementById('btnDetect').disabled = disabled;
+            document.getElementById('btnClear').disabled = disabled;
+        }
+        function fetchTables() {
+            fetch('/get_tables')
+                .then(res => res.json())
+                .then(data => {
+                    const select = document.getElementById('masaSelect');
+                    select.innerHTML = '';
+                    Object.keys(data).forEach(id => {
+                        const opt = document.createElement('option');
+                        opt.value = id;
+                        opt.text = 'Masa ' + id;
+                        select.appendChild(opt);
+                    });
+                    selectedTable = select.value;
+                    fetchOrder();
+                });
+        }
+        document.getElementById('masaSelect').addEventListener('change', function() {
+            selectedTable = this.value;
+            fetchArchive();
+            document.getElementById('detectedFoods').innerHTML = '';
+            fetchOrder();
+        });
+        function fetchOrder() {
+            fetch('/get_tables')
+                .then(res => res.json())
+                .then(data => {
+                    const masa = data[selectedTable];
+                    const box = document.getElementById('orderBox');
+                    if (masa && masa.current_order && masa.current_order.length > 0) {
+                        let html = '<h3>Mevcut Sipariş</h3><div class="order-list">';
+                        masa.current_order.forEach(f => {
+                            html += `<span>${f.name} (${f.price}₺)</span>`;
+                        });
+                        html += '</div>';
+                        html += `<div class="order-total">Toplam: ${masa.total}₺</div>`;
+                        box.innerHTML = html;
+                        box.style.display = 'block';
+                    } else {
+                        box.innerHTML = '';
+                        box.style.display = 'none';
+                    }
+                });
+        }
+        function fetchFrame() {
+            fetch('/get_frame')
+                .then(res => res.json())
+                .then(data => {
+                    const img = document.getElementById('liveFrame');
+                    if (data.frame) {
+                        img.src = 'data:image/jpeg;base64,' + data.frame;
+                    } else {
+                        img.src = '';
+                    }
+                });
+        }
+        setInterval(fetchFrame, 1000);
+        function startCamera() {
+            if (!currentWaiter) return alert('Lütfen önce garson girişi yapın!');
+            fetch('/start_camera').then(() => setTimeout(fetchFrame, 500));
+        }
+        function stopCamera() {
+            if (!currentWaiter) return alert('Lütfen önce garson girişi yapın!');
+            fetch('/stop_camera');
+        }
+        function detectFood() {
+            if (!currentWaiter) return alert('Lütfen önce garson girişi yapın!');
+            fetch('/detect_food/' + selectedTable)
+                .then(res => res.json())
+                .then(data => {
+                    const foods = data.detected_foods.map(f => `<span>${f.name} (${f.price}₺)</span>`).join(' ');
+                    document.getElementById('detectedFoods').innerHTML =
+                        '<b>Tespit Edilenler:</b> ' + (foods || 'Yok');
+                    fetchArchive();
+                    fetchOrder();
+                });
+        }
+        function clearOrder() {
+            if (!currentWaiter) return alert('Lütfen önce garson girişi yapın!');
+            fetch('/clear_table/' + selectedTable)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'cleared') {
+                        alert('Sipariş başarıyla temizlendi/ödendi!');
+                        fetchOrder();
+                        fetchArchive();
+                    }
+                });
+        }
+        function fetchArchive() {
+            fetch('/get_image_archive')
+                .then(res => res.json())
+                .then(data => {
+                    const tbody = document.getElementById('archiveBody');
+                    tbody.innerHTML = '';
+                    if (data.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="4">Arşivde kayıt yok.</td></tr>';
+                        return;
+                    }
+                    data.forEach(item => {
+                        if(item.table_id !== selectedTable) return;
+                        const foods = item.detected_foods.map(f => `<span>${f.name} (${f.price}₺)</span>`).join(' ');
+                        const row = `<tr>
+                            <td>${new Date(item.timestamp).toLocaleString('tr-TR')}</td>
+                            <td>${item.table_id}</td>
+                            <td><img class="img-thumb" src="data:image/jpeg;base64,${item.image_data}" /></td>
+                            <td class="food-list">${foods || '-'}</td>
+                        </tr>`;
+                        tbody.innerHTML += row;
+                    });
+                    if(tbody.innerHTML === '') tbody.innerHTML = '<tr><td colspan="4">Bu masa için arşiv yok.</td></tr>';
+                });
+        }
+        fetchWaiters();
+        fetchTables();
+        setTimeout(fetchArchive, 500);
+        setInterval(fetchArchive, 10000);
+        setButtonsDisabled(true);
+    </script>
+</body>
+</html>
