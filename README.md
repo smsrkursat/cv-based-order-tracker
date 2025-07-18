@@ -1,6 +1,6 @@
-# BGG-but
+# cv-based-order-tracker
 
-BGG-but, restoranlarda kamera ile yemek tespiti, masa ve garson yönetimi, sipariş takibi ve raporlama sağlayan bir Flask + MongoDB tabanlı demo projedir.
+cv-based-order-tracker, restoranlarda kamera ile yemek tespiti, masa ve garson yönetimi, sipariş takibi ve raporlama sağlayan bir Flask + MongoDB tabanlı demo projedir.
 
 ## Özellikler
 - **Canlı Kamera:** Web arayüzünden canlı kamera görüntüsü izleme
